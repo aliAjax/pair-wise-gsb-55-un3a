@@ -8,7 +8,7 @@ import { operationModes } from '@/data/mock'
 import type { ReviewStatus } from '@/types/domain'
 
 const store = useAppStore()
-const { devices, scenarios } = storeToRefs(store)
+const { devices, scenarios, bypassBatches } = storeToRefs(store)
 const selectedId = ref(scenarios.value[0]?.id ?? '')
 const compareId = ref(scenarios.value[1]?.id ?? '')
 const playbackIndex = ref(-1)
@@ -28,6 +28,25 @@ const form = reactive({
 const selected = computed(() => scenarios.value.find((item) => item.id === selectedId.value))
 const compared = computed(() => scenarios.value.find((item) => item.id === compareId.value))
 
+const deviceName = (id: string) => devices.value.find((item) => item.id === id)?.name ?? id
+const baselineVersion = (id: string) =>
+  store.data.baselines.find((item) => item.id === id)?.version ?? id
+
+const selectedBatch = computed(() =>
+  selected.value?.basisBatchId
+    ? bypassBatches.value.find((item) => item.id === selected.value?.basisBatchId)
+    : undefined,
+)
+
+const formBatch = computed(() =>
+  form.faultDeviceId
+    ? bypassBatches.value.find(
+        (item) => item.status === 'commissioned' && item.lineId === form.faultDeviceId,
+      )
+    : undefined,
+)
+const availableModes = computed(() => formBatch.value?.operationModes ?? operationModes)
+
 const statusText = (status: ReviewStatus) =>
   ({
     draft: '草稿',
@@ -35,6 +54,7 @@ const statusText = (status: ReviewStatus) =>
     approved: '已批准',
     locked: '已锁定',
     returned: '已退回',
+    invalidated: '已失效',
   })[status]
 
 const statusType = (status: ReviewStatus) =>
@@ -42,7 +62,7 @@ const statusType = (status: ReviewStatus) =>
     ? 'success'
     : status === 'reviewing'
       ? 'warning'
-      : status === 'returned'
+      : status === 'returned' || status === 'invalidated'
         ? 'danger'
         : 'info'
 
@@ -64,6 +84,15 @@ watch(scenarios, (list) => {
     compareId.value = list.find((item) => item.id !== selectedId.value)?.id ?? ''
   }
 })
+
+watch(
+  () => form.faultDeviceId,
+  () => {
+    if (formBatch.value && !formBatch.value.operationModes.includes(form.operationMode)) {
+      form.operationMode = formBatch.value.operationModes[0]
+    }
+  },
+)
 
 function stopPlayback() {
   if (playbackTimer) window.clearInterval(playbackTimer)
@@ -91,8 +120,22 @@ function replay() {
 
 async function changeStatus(status: ReviewStatus) {
   if (!selected.value) return
-  await store.updateScenarioStatus(selected.value.id, status)
-  ElMessage.success(`场景状态已更新为${statusText(status)}`)
+  try {
+    await store.updateScenarioStatus(selected.value.id, status)
+    ElMessage.success(`场景状态已更新为${statusText(status)}`)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '状态流转被拒绝')
+  }
+}
+
+async function recalculate() {
+  if (!selected.value) return
+  try {
+    await store.recalculateScenario(selected.value.id)
+    ElMessage.success('场景已按当前冻结依据重算，回到草稿状态')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '场景重算失败')
+  }
 }
 
 async function createScenario() {
@@ -100,25 +143,29 @@ async function createScenario() {
     ElMessage.warning('请填写场景名称并选择故障设备')
     return
   }
-  const created = await store.addScenario({
-    name: form.name.trim(),
-    operationMode: form.operationMode,
-    faultDeviceId: form.faultDeviceId,
-    faultType: form.faultType,
-    outageDevices: [...form.outageDevices],
-    notes: form.notes,
-  })
-  selectedId.value = created.id
-  createDialog.value = false
-  Object.assign(form, {
-    name: '',
-    operationMode: operationModes[0],
-    faultDeviceId: '',
-    faultType: '单相接地',
-    outageDevices: [],
-    notes: '',
-  })
-  ElMessage.success('故障场景已创建')
+  try {
+    const created = await store.addScenario({
+      name: form.name.trim(),
+      operationMode: form.operationMode,
+      faultDeviceId: form.faultDeviceId,
+      faultType: form.faultType,
+      outageDevices: [...form.outageDevices],
+      notes: form.notes,
+    })
+    selectedId.value = created.id
+    createDialog.value = false
+    Object.assign(form, {
+      name: '',
+      operationMode: operationModes[0],
+      faultDeviceId: '',
+      faultType: '单相接地',
+      outageDevices: [],
+      notes: '',
+    })
+    ElMessage.success('故障场景已创建')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '场景创建失败')
+  }
 }
 
 onBeforeUnmount(stopPlayback)
@@ -174,8 +221,59 @@ onBeforeUnmount(stopPlayback)
               <el-button type="success" @click="changeStatus('approved')">批准场景</el-button>
               <el-button type="danger" plain @click="changeStatus('returned')">退回补充</el-button>
             </template>
+            <el-button v-if="selected.status === 'invalidated'" type="warning" @click="recalculate">
+              重算并回到草稿
+            </el-button>
           </div>
         </div>
+
+        <el-alert
+          v-if="selected.status === 'invalidated'"
+          :title="`场景已失效：${selected.invalidatedReason ?? '代路依据变更'}`"
+          description="动作序列已标记为待重算，重算后需重新提交会签。"
+          type="error"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 14px"
+        />
+
+        <el-alert
+          v-if="selected.reReview"
+          :title="`原结论保留，需复议：${selected.reReview.reason}`"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 14px"
+        >
+          <p>必须复议的步骤：{{ selected.reReview.stepSequences.join('、') || '无' }}</p>
+          <p>
+            必须复议的停电范围：{{
+              selected.reReview.outageDevices.map(deviceName).join('、') || '无'
+            }}
+          </p>
+        </el-alert>
+
+        <el-descriptions
+          v-if="selectedBatch"
+          :column="2"
+          border
+          size="small"
+          style="margin-bottom: 16px"
+        >
+          <el-descriptions-item label="代路批次">
+            {{ selectedBatch.code }}（{{ selectedBatch.status === 'commissioned' ? '投运中' : '已结束' }}）
+          </el-descriptions-item>
+          <el-descriptions-item label="冻结修订">
+            <span class="mono">R{{ selected.basisRevision }}</span>
+            <span v-if="selectedBatch.revision !== selected.basisRevision" class="muted">
+              （当前 R{{ selectedBatch.revision }}）
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="被代线路">{{ deviceName(selectedBatch.lineId) }}</el-descriptions-item>
+          <el-descriptions-item label="旁路保护">{{ deviceName(selectedBatch.bypassRelayId) }}</el-descriptions-item>
+          <el-descriptions-item label="定值基线">{{ baselineVersion(selectedBatch.baselineId) }}</el-descriptions-item>
+          <el-descriptions-item label="适用运行方式">{{ selectedBatch.operationModes.join('、') }}</el-descriptions-item>
+        </el-descriptions>
 
         <el-timeline>
           <el-timeline-item
@@ -241,13 +339,21 @@ onBeforeUnmount(stopPlayback)
     </div>
 
     <el-dialog v-model="createDialog" title="新建故障场景" width="620px">
+      <el-alert
+        v-if="formBatch"
+        :title="`故障设备处于代路批次 ${formBatch.code} 中，场景动作序列将引用该批次冻结依据（修订 R${formBatch.revision}）`"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      />
       <el-form :model="form" label-width="100px">
         <el-form-item label="场景名称" required>
           <el-input v-model="form.name" placeholder="例如 110kV 母线故障且 1 号主变检修" />
         </el-form-item>
         <el-form-item label="运行方式" required>
           <el-select v-model="form.operationMode" style="width: 100%">
-            <el-option v-for="mode in operationModes" :key="mode" :label="mode" :value="mode" />
+            <el-option v-for="mode in availableModes" :key="mode" :label="mode" :value="mode" />
           </el-select>
         </el-form-item>
         <el-form-item label="故障设备" required>

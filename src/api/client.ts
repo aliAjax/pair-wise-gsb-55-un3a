@@ -22,6 +22,13 @@ function ok<T>(config: AxiosRequestConfig, data: T): AxiosResponse<T> {
   }
 }
 
+let nextSaveFails = false
+
+/** 布设一次性故障：下一次保存数据落库但回执丢失，用于演练失败恢复与回执重放。 */
+export function armNextSaveFailure(): void {
+  nextSaveFails = true
+}
+
 const mockAdapter: AxiosAdapter = async (config) => {
   await new Promise((resolve) => window.setTimeout(resolve, 180))
   const payload = JSON.parse((config.data as string | undefined) ?? '{}') as MockRequest
@@ -30,6 +37,11 @@ const mockAdapter: AxiosAdapter = async (config) => {
   }
   if (config.url === '/state' && config.method === 'post') {
     const next = payload.state ?? loadState()
+    if (nextSaveFails) {
+      nextSaveFails = false
+      saveState(next)
+      return Promise.reject(new Error('模拟故障：保存回执丢失（数据已落库，响应未返回）'))
+    }
     saveState(next)
     return ok(config, next)
   }

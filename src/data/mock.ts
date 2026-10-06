@@ -1,6 +1,7 @@
 import type {
   AppState,
   AuditEntry,
+  BypassBatch,
   Device,
   FaultScenario,
   ProtectionSetting,
@@ -141,6 +142,17 @@ const devices: Device[] = [
     status: 'running',
     operationModes: ['正常方式', '单母线检修'],
   },
+  {
+    id: 'relay-bypass-35',
+    code: 'PR-BYP-35',
+    name: '35kV 旁路保护',
+    kind: 'relay',
+    station: '西岭变电站',
+    voltage: 35,
+    parentId: 'bus-35-b',
+    status: 'running',
+    operationModes: ['正常方式', '单母线检修', '线路 N-1'],
+  },
 ]
 
 const settings: ProtectionSetting[] = [
@@ -270,6 +282,34 @@ const settings: ProtectionSetting[] = [
     startCondition: '母线差流启动',
     updatedAt: '2026-09-22T05:30:00.000Z',
   },
+  {
+    id: 'set-byp35-1',
+    relayId: 'relay-bypass-35',
+    protectedDeviceId: 'line-202',
+    stage: 'I',
+    currentA: 6.0,
+    timeS: 0.1,
+    direction: 'forward',
+    sensitivity: 1.68,
+    recloseEnabled: true,
+    recloseDelayS: 1.6,
+    startCondition: '相电流突变量启动',
+    updatedAt: '2026-09-26T01:00:00.000Z',
+  },
+  {
+    id: 'set-byp35-2',
+    relayId: 'relay-bypass-35',
+    protectedDeviceId: 'line-202',
+    stage: 'II',
+    currentA: 3.2,
+    timeS: 0.6,
+    direction: 'forward',
+    sensitivity: 1.42,
+    recloseEnabled: false,
+    recloseDelayS: 0,
+    startCondition: '相电流越限启动',
+    updatedAt: '2026-09-26T01:00:00.000Z',
+  },
 ]
 
 const scenarios: FaultScenario[] = [
@@ -303,6 +343,26 @@ const scenarios: FaultScenario[] = [
     outageDevices: ['line-202'],
     createdAt: '2026-09-24T06:15:00.000Z',
     notes: '需要确认运行方式切换后灵敏度是否满足要求。',
+    basisBatchId: 'bypass-202',
+    basisRevision: 1,
+  },
+  {
+    id: 'sc-202-bypass-near',
+    name: '代路期间 202 线路近端故障',
+    operationMode: '正常方式',
+    faultDeviceId: 'line-202',
+    faultType: '单相接地',
+    status: 'approved',
+    steps: [
+      { sequence: 1, relayId: 'relay-bypass-35', action: '旁路保护 I 段瞬时动作，跳开旁路开关', delayMs: 100, status: 'executed' },
+      { sequence: 2, relayId: 'relay-bypass-35', action: '重合闸启动并等待', delayMs: 1600, status: 'executed' },
+      { sequence: 3, relayId: 'relay-bypass-35', action: '重合于故障后加速跳闸', delayMs: 1750, status: 'executed' },
+    ],
+    outageDevices: ['line-202'],
+    createdAt: '2026-09-26T03:40:00.000Z',
+    notes: '代路期间由旁路保护切除故障，动作结论已批准。',
+    basisBatchId: 'bypass-202',
+    basisRevision: 1,
   },
   {
     id: 'sc-bus-a',
@@ -318,6 +378,22 @@ const scenarios: FaultScenario[] = [
     outageDevices: ['bus-110-a', 'line-101', 'transformer-1'],
     createdAt: '2026-09-25T01:35:00.000Z',
     notes: '停电范围需与调度运行方式核对。',
+  },
+]
+
+const bypassBatches: BypassBatch[] = [
+  {
+    id: 'bypass-202',
+    code: 'BL-2026-035',
+    status: 'commissioned',
+    lineId: 'line-202',
+    bypassRelayId: 'relay-bypass-35',
+    baselineId: 'baseline-1',
+    operationModes: ['正常方式', '单母线检修', '线路 N-1'],
+    settingsRevision: 1,
+    revision: 1,
+    frozenAt: '2026-09-26T01:00:00.000Z',
+    note: '202 线路检修期间由 35kV 旁路保护代路。',
   },
 ]
 
@@ -337,6 +413,14 @@ const audit: AuditEntry[] = [
     operator: '李审',
     detail: '动作序列与停电范围已确认。',
     createdAt: '2026-09-25T02:10:00.000Z',
+  },
+  {
+    id: 'audit-3',
+    action: '旁路代路投运',
+    target: 'BL-2026-035（西岭至工业园二线）',
+    operator: '陈工',
+    detail: '冻结被代线路、旁路保护 35kV 旁路保护、定值基线 V1.0 与 3 个适用运行方式，冻结修订 R1。',
+    createdAt: '2026-09-26T01:00:00.000Z',
   },
 ]
 
@@ -376,6 +460,9 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+    bypassBatches: bypassBatches.map((batch) => ({ ...batch, operationModes: [...batch.operationModes] })),
+    settingsRevision: 1,
+    currentOperationMode: '正常方式',
   }
 }
 

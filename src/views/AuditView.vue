@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { useExportMutation } from '@/api/queries'
+import { armNextSaveFailure } from '@/api/client'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
@@ -47,6 +48,11 @@ async function resetData() {
   preview.value = ''
   ElMessage.success('演示数据已恢复')
 }
+
+function simulateSaveFailure() {
+  armNextSaveFailure()
+  ElMessage.warning('已布设一次性故障：下一次保存将模拟回执丢失，可在页头重放回执')
+}
 </script>
 
 <template>
@@ -56,6 +62,7 @@ async function resetData() {
       description="追踪设备、定值、问题、场景、基线和导出操作，生成可核对的定值清单。"
     >
       <template #actions>
+        <el-button @click="simulateSaveFailure">模拟保存失败</el-button>
         <el-button @click="resetData">恢复演示数据</el-button>
         <el-button type="primary" :loading="exportMutation.isPending.value" @click="exportList">
           导出定值清单

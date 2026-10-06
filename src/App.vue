@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
+import { Connection, DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useAppStateQuery } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
 
@@ -23,9 +24,19 @@ const menuItems = [
   { path: '/devices', label: '设备台账', icon: Files },
   { path: '/coordination', label: '配合校核', icon: DocumentChecked },
   { path: '/scenarios', label: '故障场景', icon: Operation },
+  { path: '/bypass', label: '旁路代路', icon: Connection },
   { path: '/baseline', label: '会签与基线', icon: Tickets },
   { path: '/audit', label: '审计与导出', icon: SetUp },
 ]
+
+async function replayReceipt() {
+  try {
+    await store.replayFailedReceipt()
+    ElMessage.success('回执重放完成，未产生重复审计记录')
+  } catch (replayError) {
+    ElMessage.error(replayError instanceof Error ? replayError.message : '回执重放失败')
+  }
+}
 </script>
 
 <template>
@@ -66,6 +77,10 @@ const menuItems = [
           <h1>{{ title }}</h1>
         </div>
         <div class="header-actions">
+          <template v-if="store.failedReceipt">
+            <el-tag type="danger">保存失败：{{ store.failedReceipt.label }}</el-tag>
+            <el-button size="small" type="danger" plain @click="replayReceipt">重放回执</el-button>
+          </template>
           <el-tag v-if="store.saving" type="warning">正在保存</el-tag>
           <el-tag v-else type="success">数据已持久化</el-tag>
           <el-avatar :size="32">陈</el-avatar>

@@ -2,7 +2,7 @@ export type DeviceKind = 'line' | 'transformer' | 'bus' | 'breaker' | 'relay'
 export type DeviceStatus = 'running' | 'maintenance' | 'stopped'
 export type IssueType = 'overreach' | 'time-inversion' | 'sensitivity' | 'reclose'
 export type IssueLevel = 'high' | 'medium' | 'low'
-export type ReviewStatus = 'draft' | 'reviewing' | 'approved' | 'locked' | 'returned'
+export type ReviewStatus = 'draft' | 'reviewing' | 'approved' | 'locked' | 'returned' | 'invalidated'
 
 export interface Device {
   id: string
@@ -52,6 +52,13 @@ export interface ScenarioStep {
   status: 'executed' | 'pending' | 'skipped'
 }
 
+export interface ScenarioReReview {
+  reason: string
+  stepSequences: number[]
+  outageDevices: string[]
+  createdAt: string
+}
+
 export interface FaultScenario {
   id: string
   name: string
@@ -63,6 +70,25 @@ export interface FaultScenario {
   outageDevices: string[]
   createdAt: string
   notes: string
+  basisBatchId?: string
+  basisRevision?: number
+  invalidatedReason?: string
+  reReview?: ScenarioReReview
+}
+
+export interface BypassBatch {
+  id: string
+  code: string
+  status: 'commissioned' | 'ended'
+  lineId: string
+  bypassRelayId: string
+  baselineId: string
+  operationModes: string[]
+  settingsRevision: number
+  revision: number
+  frozenAt: string
+  endedAt?: string
+  note: string
 }
 
 export interface BaselineVersion {
@@ -94,6 +120,7 @@ export interface AuditEntry {
   operator: string
   detail: string
   createdAt: string
+  mutationId?: string
 }
 
 export interface AppState {
@@ -104,6 +131,9 @@ export interface AppState {
   baselines: BaselineVersion[]
   comments: ReviewComment[]
   audit: AuditEntry[]
+  bypassBatches: BypassBatch[]
+  settingsRevision: number
+  currentOperationMode: string
   activeBaselineId?: string
 }
 
