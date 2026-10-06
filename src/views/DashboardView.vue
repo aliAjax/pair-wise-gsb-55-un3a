@@ -8,20 +8,34 @@ import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const store = useAppStore()
-const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
+const { data, issues, devices, scenarios, activeBaseline, activeBatch, activeBasis } =
+  storeToRefs(store)
 
 const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
 const approvedScenarios = computed(
   () => scenarios.value.filter((scenario) => ['approved', 'locked'].includes(scenario.status)).length,
 )
+const invalidatedScenarios = computed(
+  () => scenarios.value.filter((scenario) => scenario.status === 'invalidated').length,
+)
+const pendingReReview = computed(
+  () => scenarios.value.filter((scenario) => scenario.reReview).length,
+)
+const batchScenarios = computed(() =>
+  activeBasis.value
+    ? scenarios.value.filter((scenario) => scenario.freezeBasisId === activeBasis.value!.id)
+    : [],
+)
+
+const deviceName = (id: string) => devices.value.find((device) => device.id === id)?.name ?? id
 
 const statusType = (status: string) =>
   status === 'approved' || status === 'locked'
     ? 'success'
     : status === 'reviewing'
       ? 'warning'
-      : status === 'returned'
+      : status === 'returned' || status === 'invalidated'
         ? 'danger'
         : 'info'
 
@@ -32,6 +46,7 @@ const statusText = (status: string) =>
     approved: '已批准',
     locked: '已锁定',
     returned: '已退回',
+    invalidated: '已失效待重算',
   })[status] ?? status
 </script>
 
@@ -46,6 +61,50 @@ const statusText = (status: string) =>
         <el-button type="primary" @click="router.push('/scenarios')">验证故障场景</el-button>
       </template>
     </PageHeader>
+
+    <section v-if="activeBatch && activeBasis" class="panel bypass-banner">
+      <div class="panel-title">
+        <h3>当前旁路代路依据 · {{ activeBatch.code }}</h3>
+        <div>
+          <el-tag type="danger" effect="plain" v-if="invalidatedScenarios">
+            {{ invalidatedScenarios }} 个场景失效待重算
+          </el-tag>
+          <el-tag type="warning" effect="plain" v-if="pendingReReview" style="margin-left: 8px">
+            {{ pendingReReview }} 个已批准场景待复议
+          </el-tag>
+          <el-button text type="primary" @click="router.push('/bypass')">进入批次处理</el-button>
+        </div>
+      </div>
+      <el-descriptions :column="4" border size="small">
+        <el-descriptions-item label="被代线路">
+          {{ deviceName(activeBasis.lineId) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="旁路保护">
+          {{ deviceName(activeBasis.bypassRelayId) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="定值基线">
+          {{ data.baselines.find((item) => item.id === activeBasis?.baselineId)?.version ?? '未绑定' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="适用运行方式">
+          {{ activeBasis.operationMode }}
+          <span v-if="data.currentOperationMode !== activeBasis.operationMode" class="danger-text">
+            （当前 {{ data.currentOperationMode }}）
+          </span>
+        </el-descriptions-item>
+        <el-descriptions-item label="冻结修订">
+          R{{ activeBatch.basisRevision }}
+        </el-descriptions-item>
+        <el-descriptions-item label="冻结定值">
+          {{ activeBasis.settingsSnapshot.length }} 条
+        </el-descriptions-item>
+        <el-descriptions-item label="校验码">
+          <span class="mono">{{ activeBasis?.checksum }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="批次场景">
+          {{ batchScenarios.length }} 个引用该依据
+        </el-descriptions-item>
+      </el-descriptions>
+    </section>
 
     <section class="metric-grid">
       <div class="metric danger">
@@ -91,8 +150,16 @@ const statusText = (status: string) =>
         </div>
         <el-table :data="scenarios" max-height="320">
           <el-table-column prop="name" label="场景" min-width="190" />
-          <el-table-column prop="operationMode" label="运行方式" width="120" />
-          <el-table-column label="状态" width="90">
+          <el-table-column prop="operationMode" label="运行方式" width="110" />
+          <el-table-column label="代路依据" width="110">
+            <template #default="{ row }">
+              <el-tag v-if="row.freezeBasisId" size="small" type="primary" effect="plain">
+                R{{ row.basisRevision ?? 1 }}
+              </el-tag>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
             <template #default="{ row }">
               <el-tag :type="statusType(row.status)" effect="plain">
                 {{ statusText(row.status) }}

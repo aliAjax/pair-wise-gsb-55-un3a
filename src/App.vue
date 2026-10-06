@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
+import { DataLine, DocumentChecked, Files, Operation, SetUp, Switch, Tickets } from '@element-plus/icons-vue'
 import { useAppStateQuery } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
 
@@ -23,6 +23,7 @@ const menuItems = [
   { path: '/devices', label: '设备台账', icon: Files },
   { path: '/coordination', label: '配合校核', icon: DocumentChecked },
   { path: '/scenarios', label: '故障场景', icon: Operation },
+  { path: '/bypass', label: '旁路代路', icon: Switch },
   { path: '/baseline', label: '会签与基线', icon: Tickets },
   { path: '/audit', label: '审计与导出', icon: SetUp },
 ]

@@ -1,11 +1,14 @@
 import type {
   AppState,
   AuditEntry,
+  BypassBatch,
+  BypassFreezeBasis,
   Device,
   FaultScenario,
   ProtectionSetting,
 } from '@/types/domain'
 import { validateSettings } from '@/services/validation'
+import { basisChecksum } from '@/services/bypass'
 
 export const operationModes = ['正常方式', '单母线检修', '线路 N-1', '变压器检修']
 
@@ -141,6 +144,28 @@ const devices: Device[] = [
     status: 'running',
     operationModes: ['正常方式', '单母线检修'],
   },
+  {
+    id: 'breaker-bp-101',
+    code: 'CB-BP-101',
+    name: '110kV 旁路 110 断路器',
+    kind: 'breaker',
+    station: '东郊变电站',
+    voltage: 110,
+    parentId: 'bus-110-a',
+    status: 'running',
+    operationModes: ['正常方式', '线路 N-1'],
+  },
+  {
+    id: 'relay-bp-101',
+    code: 'PR-BP-101',
+    name: '110kV 旁路保护',
+    kind: 'relay',
+    station: '东郊变电站',
+    voltage: 110,
+    parentId: 'breaker-bp-101',
+    status: 'running',
+    operationModes: ['正常方式', '线路 N-1'],
+  },
 ]
 
 const settings: ProtectionSetting[] = [
@@ -270,6 +295,34 @@ const settings: ProtectionSetting[] = [
     startCondition: '母线差流启动',
     updatedAt: '2026-09-22T05:30:00.000Z',
   },
+  {
+    id: 'set-bp101-1',
+    relayId: 'relay-bp-101',
+    protectedDeviceId: 'line-101',
+    stage: 'I',
+    currentA: 8.2,
+    timeS: 0.06,
+    direction: 'forward',
+    sensitivity: 1.78,
+    recloseEnabled: true,
+    recloseDelayS: 1.2,
+    startCondition: '相电流突变量启动（旁路代 101）',
+    updatedAt: '2026-09-26T01:10:00.000Z',
+  },
+  {
+    id: 'set-bp101-2',
+    relayId: 'relay-bp-101',
+    protectedDeviceId: 'line-101',
+    stage: 'II',
+    currentA: 4.5,
+    timeS: 0.6,
+    direction: 'forward',
+    sensitivity: 1.12,
+    recloseEnabled: false,
+    recloseDelayS: 0,
+    startCondition: '相电流越限启动（旁路代 101）',
+    updatedAt: '2026-09-26T01:10:00.000Z',
+  },
 ]
 
 const scenarios: FaultScenario[] = [
@@ -280,14 +333,50 @@ const scenarios: FaultScenario[] = [
     faultDeviceId: 'line-101',
     faultType: '单相接地',
     status: 'approved',
+    freezeBasisId: 'basis-bp-101',
+    basisRevision: 1,
+    approvedAtRevision: 1,
     steps: [
-      { sequence: 1, relayId: 'relay-l101', action: 'I 段瞬时动作，跳开 101 断路器', delayMs: 50, status: 'executed' },
-      { sequence: 2, relayId: 'relay-l101', action: '重合闸启动并等待', delayMs: 1200, status: 'executed' },
-      { sequence: 3, relayId: 'relay-l101', action: '重合于故障后加速跳闸', delayMs: 1350, status: 'executed' },
+      { sequence: 1, relayId: 'relay-l101', action: 'I 段瞬时动作，跳开 101 断路器', delayMs: 50, status: 'executed', basisId: 'basis-bp-101' },
+      { sequence: 2, relayId: 'relay-l101', action: '重合闸启动并等待', delayMs: 1200, status: 'executed', basisId: 'basis-bp-101' },
+      { sequence: 3, relayId: 'relay-l101', action: '重合于故障后加速跳闸', delayMs: 1350, status: 'executed', basisId: 'basis-bp-101' },
     ],
     outageDevices: ['line-101'],
     createdAt: '2026-09-23T02:00:00.000Z',
-    notes: '近端永久故障未导致上级母线失电。',
+    notes: '近端永久故障未导致上级母线失电；旁路代路期间按冻结依据 R1 保留批准结论。',
+  },
+  {
+    id: 'sc-bp101-review',
+    name: '101 旁路代路近端相间故障',
+    operationMode: '正常方式',
+    faultDeviceId: 'line-101',
+    faultType: '相间短路',
+    status: 'reviewing',
+    freezeBasisId: 'basis-bp-101',
+    basisRevision: 1,
+    steps: [
+      { sequence: 1, relayId: 'relay-bp-101', action: 'I 段瞬时动作，跳开旁路 110 断路器', delayMs: 60, status: 'executed', basisId: 'basis-bp-101' },
+      { sequence: 2, relayId: 'relay-bp-101', action: '重合闸启动并等待', delayMs: 1200, status: 'pending', basisId: 'basis-bp-101' },
+    ],
+    outageDevices: ['line-101'],
+    createdAt: '2026-09-26T02:00:00.000Z',
+    notes: '旁路保护代路动作序列，仅引用 BP-2026-001 冻结依据。',
+  },
+  {
+    id: 'sc-bp101-stale',
+    name: '101 代路过流故障（投运前旧场景）',
+    operationMode: '正常方式',
+    faultDeviceId: 'line-101',
+    faultType: '单相接地',
+    status: 'invalidated',
+    freezeBasisId: 'basis-bp-101',
+    basisRevision: 1,
+    steps: [
+      { sequence: 1, relayId: 'relay-l101', action: 'II 段延时动作，跳开 101 断路器', delayMs: 550, status: 'executed' },
+    ],
+    outageDevices: ['line-101'],
+    createdAt: '2026-09-24T08:30:00.000Z',
+    notes: '投运冻结时动作序列未引用冻结依据，已失效，需按旁路保护重算。',
   },
   {
     id: 'sc-202-mode-b',
@@ -323,11 +412,20 @@ const scenarios: FaultScenario[] = [
 
 const audit: AuditEntry[] = [
   {
+    id: 'audit-bp-start',
+    action: '旁路代路投运冻结',
+    target: 'BP-2026-001 101 线路',
+    operator: '陈工',
+    detail:
+      '冻结被代线路、旁路保护定值 4 条、基线 V1.0 与适用方式（正常方式），校验码以批次冻结快照为准。',
+    createdAt: '2026-09-26T01:20:00.000Z',
+  },
+  {
     id: 'audit-1',
     action: '导入定值',
     target: '2026 秋检初始方案',
     operator: '陈工',
-    detail: '导入 12 台设备、9 份保护定值。',
+    detail: '导入 13 台设备、11 份保护定值。',
     createdAt: '2026-09-25T00:30:00.000Z',
   },
   {
@@ -335,13 +433,40 @@ const audit: AuditEntry[] = [
     action: '场景审批',
     target: '101 线路近端永久故障',
     operator: '李审',
-    detail: '动作序列与停电范围已确认。',
+    detail: '动作序列与停电范围已按冻结依据 R1 确认。',
     createdAt: '2026-09-25T02:10:00.000Z',
   },
 ]
 
 export function createInitialState(): AppState {
   const clonedSettings = settings.map((setting) => ({ ...setting }))
+  const frozenSettings = clonedSettings.filter(
+    (setting) => setting.protectedDeviceId === 'line-101' || setting.relayId === 'relay-bp-101',
+  )
+  const frozenBasis: BypassFreezeBasis = {
+    id: 'basis-bp-101',
+    revision: 1,
+    lineId: 'line-101',
+    bypassRelayId: 'relay-bp-101',
+    bypassBreakerId: 'breaker-bp-101',
+    baselineId: 'baseline-1',
+    operationMode: '正常方式',
+    settingsSnapshot: JSON.parse(JSON.stringify(frozenSettings)) as ProtectionSetting[],
+    checksum: basisChecksum(frozenSettings),
+    frozenAt: '2026-09-26T01:20:00.000Z',
+    createdBy: '陈工',
+    note: '101 线路秋检，110kV 旁路代路投运冻结。',
+  }
+  const activeBatch: BypassBatch = {
+    id: 'batch-bp-101',
+    code: 'BP-2026-001',
+    status: 'active',
+    basisId: 'basis-bp-101',
+    basisRevision: 1,
+    startedAt: '2026-09-26T01:20:00.000Z',
+    operator: '陈工',
+    revisionEvents: [],
+  }
   return {
     devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
     settings: clonedSettings,
@@ -376,6 +501,11 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+    activeBaselineId: 'baseline-1',
+    bypassBases: [frozenBasis],
+    bypassBatches: [activeBatch],
+    currentOperationMode: '正常方式',
+    drillRuns: [],
   }
 }
 

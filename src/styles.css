@@ -276,6 +276,14 @@ textarea {
   color: #708292;
 }
 
+.danger-text {
+  color: #c84c4c;
+}
+
+.bypass-banner {
+  border-left: 4px solid #d58a27;
+}
+
 .mono {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
